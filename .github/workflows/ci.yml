@@ -39,5 +39,10 @@ jobs:
         with:
           version: 0.14.1
 
+      # Zig cannot find libSystem on the macOS runners by itself; without this
+      # even the build runner fails to link, every libc symbol undefined.
+      - name: Point Zig at the macOS SDK
+        run: echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
       - name: Build everything
         run: zig build --summary all
