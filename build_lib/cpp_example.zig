@@ -160,6 +160,12 @@ pub const TargetOptions = struct {
     name: []const u8,
     description: ?[]const u8 = null,
     source_files: []const []const u8,
+    // A pure-Zig target: the root `.zig` source compiled directly into the
+    // artifact. When set, the target has no C/C++ sources and does not link the
+    // C++ runtime; `source_files` is left empty. This is how Zaza builds a
+    // Zig library or executable (e.g. a corpus parity slice) rather than a
+    // C/C++ one.
+    zig_root: ?[]const u8 = null,
     include_dirs: []const []const u8 = &.{},
     public_include_dirs: []const []const u8 = &.{},
     private_include_dirs: []const []const u8 = &.{},
@@ -650,6 +656,7 @@ pub const CppExample = struct {
     description: []const u8,
     kind: TargetKind = .executable,
     source_files: []const []const u8,
+    zig_root: ?[]const u8 = null,
     include_dirs: []const []const u8,
     public_include_dirs: []const []const u8 = &.{},
     private_include_dirs: []const []const u8 = &.{},
@@ -683,6 +690,7 @@ pub const CppExample = struct {
             .description = options.description orelse options.name,
             .kind = kind,
             .source_files = options.source_files,
+            .zig_root = options.zig_root,
             .include_dirs = options.include_dirs,
             .public_include_dirs = options.public_include_dirs,
             .private_include_dirs = options.private_include_dirs,
@@ -1206,7 +1214,9 @@ pub const CppExample = struct {
                 const cpp_flags = try self.cppCompileFlags(b, config, config_name, public_defines, private_defines);
 
                 const all_sources = try self.allSourceFiles(b.allocator);
-                if (self.kind != .interface_library) {
+                // A pure-Zig target already has its root compiled in; it has no
+                // C sources to add.
+                if (self.zig_root == null and self.kind != .interface_library) {
                     compile.root_module.addCSourceFiles(.{
                         .files = all_sources,
                         .flags = cpp_flags,
@@ -1236,8 +1246,8 @@ pub const CppExample = struct {
                     }
                 }
 
-                // Link C++ runtime
-                if (self.kind != .object_library and self.kind != .interface_library) {
+                // Link C++ runtime (a pure-Zig target does not need it).
+                if (self.zig_root == null and self.kind != .object_library and self.kind != .interface_library) {
                     compile.root_module.link_libcpp = true;
                 }
 
@@ -1571,13 +1581,18 @@ fn addTargetArtifact(
         .MinSizeRel => .ReleaseSmall,
     };
 
+    // A pure-Zig target compiles its `.zig` root directly; a C/C++ target has a
+    // null root and gets its C sources added later in buildWithTarget.
+    const root_source_file: ?std.Build.LazyPath =
+        if (self.zig_root) |zig_root| b.path(zig_root) else null;
+
     const compile = switch (self.kind) {
         .executable => b.addExecutable(.{
             .name = self.getExeName(b, config),
             .root_module = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = null,
+                .root_source_file = root_source_file,
             }),
         }),
         .static_library => b.addLibrary(.{
@@ -1585,7 +1600,7 @@ fn addTargetArtifact(
             .root_module = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = null,
+                .root_source_file = root_source_file,
             }),
             .linkage = .static,
         }),
@@ -1594,7 +1609,7 @@ fn addTargetArtifact(
             .root_module = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = null,
+                .root_source_file = root_source_file,
             }),
             .linkage = .dynamic,
         }),
@@ -1603,7 +1618,7 @@ fn addTargetArtifact(
             .root_module = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = null,
+                .root_source_file = root_source_file,
             }),
         }),
         .interface_library => b.addLibrary(.{
@@ -1611,7 +1626,7 @@ fn addTargetArtifact(
             .root_module = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = null,
+                .root_source_file = root_source_file,
             }),
             .linkage = .static,
         }),
